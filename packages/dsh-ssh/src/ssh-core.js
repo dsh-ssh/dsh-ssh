@@ -99,18 +99,24 @@ export function knownHostsPatterns(host, port) {
 export function checkHostKey(host, port, key, entries) {
   const patterns = knownHostsPatterns(host, port);
   const b64 = key.toString('base64');
+  const alg = sshKeyTypeFromBlob(key);
   let seen = false;
   for (const e of entries) {
     if (e && e.hashed) {
       // OpenSSH hashed host: digest = HMAC-SHA1(key=salt, msg=host), stored base64.
       const digest = createHmac('sha1', Buffer.from(e.hashedSalt, 'base64')).update(host).digest('base64');
       if (digest === e.hashedHash) {
+		if (e.keyType !== alg) continue; // cross-key-type: treat as unknown
         seen = true;
         if (e.key === b64) return 'match';
       }
       continue;
     }
     if (!patterns.includes(e.hostPat)) continue;
+	// Key type mismatch: this entry is for a different algorithm - skip so abort
+	// cross-key-type connection (e.g known-hosts has esdsa only but ssh2
+	// negotiated RSA/ed25519) is reported as 'unknown', not false 'mismatch'
+	if (e.keyType !== alg) continue;
     seen = true;
     if (e.key === b64) return 'match';
   }
