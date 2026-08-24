@@ -196,6 +196,9 @@ window.__ModuleLoader__.load({
       "host": "主机",
       "hostPh": "选择主机…",
       "noHosts": "还没有可用主机。请先到设置页「远程主机」添加一台。",
+      "path": "远程路径",
+      "go": "转到",
+      "invalidPath": "请输入以 / 开头的绝对路径",
       "home": "主目录",
       "back": "返回",
       "retry": "重试",
@@ -243,6 +246,9 @@ window.__ModuleLoader__.load({
       "host": "Host",
       "hostPh": "Select a host…",
       "noHosts": "No hosts configured. Add one under Settings → Remote Hosts first.",
+      "path": "Remote path",
+      "go": "Go",
+      "invalidPath": "Enter an absolute path starting with /",
       "home": "Home",
       "back": "Back",
       "retry": "Retry",
@@ -817,6 +823,8 @@ window.__ModuleLoader__.load({
       ".dsh-remote-pathbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}" +
       ".dsh-remote-hostswitch{flex:none;min-width:180px;max-width:220px}" +
       ".dsh-remote-path{flex:1;min-width:0;font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary,#b8b8b8);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}" +
+      ".dsh-remote-path-input{flex:1;min-width:160px;height:32px;padding:0 8px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:8px;background:var(--dsw-alias-bg-layer-2,#232529);color:var(--dsw-alias-label-primary,#e6e6e6);font-size:12px;line-height:16px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}" +
+      ".dsh-remote-path-input:focus{border-color:var(--dsw-alias-border-focus,#4ade80)}" +
       ".dsh-remote-list{display:flex;flex-direction:column;gap:2px;max-height:280px;overflow-y:auto}" +
       ".dsh-remote-row{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:none;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;line-height:18px;text-align:left;cursor:pointer}" +
       ".dsh-remote-row:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,#232529)}" +
@@ -1665,6 +1673,9 @@ window.__ModuleLoader__.load({
       var cwdState = React.useState('');
       var cwd = cwdState[0];
       var setCwd = cwdState[1];
+      var pathDraftState = React.useState('');
+      var pathDraft = pathDraftState[0];
+      var setPathDraft = pathDraftState[1];
       var entriesState = React.useState([]);
       var entries = entriesState[0];
       var setEntries = entriesState[1];
@@ -1677,6 +1688,9 @@ window.__ModuleLoader__.load({
       var errorState = React.useState(null);
       var error = errorState[0];
       var setError = errorState[1];
+      var pathErrorState = React.useState(null);
+      var pathError = pathErrorState[0];
+      var setPathError = pathErrorState[1];
       var loadErrorState = React.useState(null);
       var loadError = loadErrorState[0];
       var setLoadError = loadErrorState[1];
@@ -1684,6 +1698,7 @@ window.__ModuleLoader__.load({
       var adopting = adoptingState[0];
       var setAdopting = adoptingState[1];
       var autoBrowseRef = React.useRef(false);
+      var pathInputRef = React.useRef(null);
 
       // Unified call into the injected remote method: a synchronous throw or a
       // returned promise both converge to a promise.
@@ -1762,6 +1777,7 @@ window.__ModuleLoader__.load({
         var gen = props.generationRef.current;
         setLoading(true);
         setError(null);
+        setPathError(null);
         call('listRemoteDir', host, path).then(function (response) {
           if (gen !== props.generationRef.current) return;
           setLoading(false);
@@ -1777,6 +1793,7 @@ window.__ModuleLoader__.load({
             return;
           }
           setCwd(path);
+          setPathDraft(path);
           setStack(history);
           setEntries(Array.isArray(response.value) ? response.value : []);
           setPhase('browse');
@@ -1830,14 +1847,56 @@ window.__ModuleLoader__.load({
         var next = stack.concat([cwd]);
         listInto(hostId, (cwd.endsWith('/') ? cwd : cwd + '/') + entry.name, next);
       }
+      function parentPath(path) {
+        var value = String(path || '').replace(/\/+$/, '') || '/';
+        if (value === '/') return null;
+        var slash = value.lastIndexOf('/');
+        return slash <= 0 ? '/' : value.slice(0, slash);
+      }
+      function effectivePath() {
+        var input = pathInputRef.current;
+        return input && typeof input.value === 'string' ? input.value : (pathDraft || cwd);
+      }
       function goBack() {
-        if (stack.length === 0 || loading || adopting) return;
-        var history = stack.slice(0, -1);
-        listInto(hostId, stack[stack.length - 1], history);
+        if (loading || adopting) return;
+        var parent = parentPath(effectivePath());
+        if (parent) listInto(hostId, parent, []);
       }
       function goHome() {
         if (loading || adopting) return;
         startBrowse(hostId);
+      }
+      function normalizeRemotePath(path) {
+        var parts = String(path).split('/');
+        var kept = [];
+        for (var i = 0; i < parts.length; i++) {
+          var part = parts[i];
+          if (!part || part === '.') continue;
+          if (part === '..') {
+            if (kept.length > 0) kept.pop();
+            continue;
+          }
+          kept.push(part);
+        }
+        return '/' + kept.join('/');
+      }
+      function navigatePath() {
+        if (loading || adopting) return;
+        var draft = String(effectivePath() || '').trim();
+        if (!draft || draft.charAt(0) !== '/') {
+          setPathError(t('invalidPath'));
+          return;
+        }
+        var target = normalizeRemotePath(draft);
+        setPathError(null);
+        var history = target === cwd || !cwd ? stack : stack.concat([cwd]);
+        listInto(hostId, target, history);
+      }
+      function pathKeyDown(event) {
+        if (event.key !== 'Enter') return;
+        if (event.isComposing || (event.nativeEvent && event.nativeEvent.isComposing)) return;
+        event.preventDefault();
+        navigatePath();
       }
       function retry() {
         if (cwd && !loading && !adopting) listInto(hostId, cwd, stack);
@@ -1936,29 +1995,43 @@ window.__ModuleLoader__.load({
         for (var ci = 0; ci < hosts.length; ci++) {
           if (String(hosts[ci].id) === String(hostId)) { curHostTitle = hosts[ci].title; break; }
         }
-        // Host switcher: when more than one host is configured show a SelectMenu so the
-        // user can switch hosts mid-browse (re-browses the newly chosen host). A single
-        // host stays a static pill as the "current host" label.
-        var hostSwitcher;
-        if (hosts.length > 1) {
-          var switchOptions = hosts.map(function (h) { return { value: h.id, label: h.title }; });
-          hostSwitcher = React.createElement('div', { className: 'dsh-remote-hostswitch' },
-            React.createElement(SelectMenu, {
-              value: hostId,
-              disabled: loading || adopting,
-              options: switchOptions,
-              onChange: function (id) { selectHost(id); }
-            })
-          );
-        } else {
-          hostSwitcher = curHostTitle ? React.createElement(Pill, { active: true, className: 'dsh-remote-hostpill' }, curHostTitle) : null;
-        }
+        // Keep the host selector interactive even when only one host is configured, so
+        // the same control remains usable as hosts are added or the remembered host changes.
+        var switchOptions = hosts.map(function (h) { return { value: h.id, label: h.title }; });
+        var hostSwitcher = React.createElement('div', { className: 'dsh-remote-hostswitch' },
+          React.createElement(SelectMenu, {
+            value: hostId,
+            disabled: loading || adopting,
+            options: switchOptions,
+            onChange: function (id) { selectHost(id); }
+          })
+        );
         var pathBar = React.createElement('div', { className: 'dsh-remote-pathbar' },
           hostSwitcher,
-          React.createElement('span', { className: 'dsh-remote-path', title: cwd }, cwd),
+          React.createElement('input', {
+            ref: pathInputRef,
+            type: 'text',
+            className: 'dsh-remote-path-input',
+            value: pathDraft,
+            disabled: loading || adopting,
+            'aria-label': t('path'),
+            title: t('path'),
+            onChange: function (event) { setPathDraft(event.target.value); setPathError(null); },
+            onKeyDown: pathKeyDown
+          }),
+          React.createElement(Button, { variant: 'ghost', size: 'sm', disabled: loading || adopting, onClick: navigatePath }, t('go')),
           React.createElement(Button, { variant: 'ghost', size: 'sm', disabled: loading || adopting, onClick: goHome }, t('home')),
-          React.createElement(Button, { variant: 'ghost', size: 'sm', disabled: stack.length === 0 || loading || adopting, onClick: goBack }, t('back'))
+          React.createElement(Button, {
+            variant: 'ghost',
+            size: 'sm',
+            disabled: loading || adopting,
+            onClick: goBack
+          }, t('back'))
         );
+        var pathErrorNode = pathError ? React.createElement(StatusNote, {
+          state: 'error',
+          text: pathError
+        }) : null;
         var errorNode = error ? React.createElement(StatusNote, {
           state: 'error',
           text: error,
@@ -1973,6 +2046,7 @@ window.__ModuleLoader__.load({
           React.createElement('div', { className: 'dsh-remote-hint' }, t('capHint', { host: curHostTitle || hostId })),
           rows,
           loading ? React.createElement('div', { className: 'dsh-remote-hint' }, t('loading')) : null,
+          pathErrorNode,
           errorNode,
           React.createElement('div', { className: 'dsh-remote-actions' },
             React.createElement(Button, { variant: 'outline', size: 'sm', disabled: busy || adopting, onClick: props.onCancel }, t('cancel')),
