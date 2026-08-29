@@ -85,6 +85,17 @@ cd packages/dsh-ssh
 node --test test/*.test.js     # 基线: 295 tests, pass 295, fail 0
 ```
 
+### CI（GitHub Actions）
+
+`.github/workflows/ci.yml` 在 **push 到 main** 与 **任何 base 为 main 的 pull_request** 上自动运行，门槛与本地一致：
+
+1. `pnpm install --frozen-lockfile`（锁文件必须与 package.json 一致）；
+2. `packages/dsh-ssh` 全量单测（**fail=0 硬性**，AGENTS.md §5.1）；
+3. 客户端静态自检 `client-selfcheck.mjs`；
+4. `npm pack --dry-run` 校验发布文件白名单完整性。
+
+PR 的 CI 状态显示在 PR 页面；**fork 来源的 PR 同样受检**（workflow 于 base main 的定义处生效）。发布流水线见 `release.yml`（`v*` tag 触发，自带同样的测试门槛，双保险）。提交前本地跑一遍上述命令可避免 CI 打回。
+
 覆盖 ssh-core / ssh-reconnect（连接池/exec/SFTP/重连）、hosts-model、settings-schema / settings-migration、router（cwd 路由）、tool-routing-hook（遮蔽）、exec-fs（SFTP 降级）、remote / remote-jobs / jobs-controller（后台任务与远端语义）、remote-wire / typert-contribution（通信契约）、capability-surface（能力面）、policy（sandbox 语义）、tools-local / tools-remote / tools-search / tools-sandbox、m4-placeholder / placeholder-cleanup 等。
 
 ### 统一真机配置（live-config.mjs）

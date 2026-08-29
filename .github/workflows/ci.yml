@@ -1,0 +1,75 @@
+# =============================================================================
+# CI · 持续集成 (push / pull_request)
+#
+# 触发方式:
+#   - push 到 main
+#   - 任何以 main 为 base 的 pull_request (含来自 fork 的 PR)
+#
+# 门槛 (fail=0 硬性, 见 AGENTS.md §5.1):
+#   1. pnpm install --frozen-lockfile   (锁文件必须与 package.json 一致)
+#   2. packages/dsh-ssh 全量单测        (node --test test/*.test.js)
+#   3. 客户端静态自检                   (client.js 契约/遮蔽 priority/Typert)
+#   4. npm pack --dry-run               (files 白名单产物完整性, 不发布)
+#
+# 发布流水线见 release.yml (v* tag 触发, 自带同样的测试门槛, 双保险)。
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# 同一分支/PR 的新推送取消进行中的旧跑, 省额度。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit tests & selfcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # pnpm 必须先于 setup-node: setup-node 的 cache: pnpm 需要 pnpm 已在 PATH。
+      # 版本锁定在 root package.json 的 packageManager 字段 (pnpm@11.21.0)。
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.21.0
+          run_install: false
+
+      # 与 release.yml 保持同版本 (engines: node >=22)。
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 单测基线 fail=0 (AGENTS.md §5.1); 测试 import ssh2 等运行时依赖, 须在 install 后跑。
+      - name: Run unit tests (fail=0)
+        run: |
+          cd packages/dsh-ssh
+          node --test test/*.test.js
+
+      # 客户端静态自检 (从仓库根运行, 仅依赖 node 内置 + stubs)。
+      - name: client-selfcheck
+        run: node packages/dsh-ssh/scripts/client-selfcheck.mjs
+
+      # 校验发布产物完整性: files 白名单展开后应包含全部运行时入口
+      # (index/tools/client/cordis.patch.yml/src/lib/tools), 不含 test/ 与 scripts/。
+      - name: Verify publish file whitelist (npm pack dry-run)
+        run: npm pack --dry-run
+        working-directory: packages/dsh-ssh
